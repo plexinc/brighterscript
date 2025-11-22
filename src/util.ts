@@ -1155,6 +1155,8 @@ export class Util {
                 return new DoubleType(token.text);
             case TokenKind.DoubleLiteral:
                 return new DoubleType();
+            case TokenKind.ReplacementIdentifier:
+                return new DynamicType();
             case TokenKind.Dynamic:
                 return new DynamicType(token.text);
             case TokenKind.Float:
