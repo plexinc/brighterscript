@@ -37,4 +37,23 @@ describe('stop statement', () => {
         let { diagnostics } = Parser.parse(tokens);
         expect(diagnostics.length).to.equal(0);
     });
+    it('supports @stop', () => {
+        let { diagnostics } = Parser.parse([token(TokenKind.AtStop, '@stop'), EOF]);
+        expect(diagnostics[0]).to.be.undefined;
+    });
+
+    it('supports @STOP', () => {
+        let { diagnostics } = Parser.parse([token(TokenKind.AtStop, '@STOP'), EOF]);
+        expect(diagnostics[0]).to.be.undefined;
+    });
+
+    it('lexer recognizes @stop', () => {
+        let { tokens } = Lexer.scan('@stop');
+        expect(tokens[0].kind).to.equal(TokenKind.AtStop);
+    });
+
+    it('lexer recognizes @STOP', () => {
+        let { tokens } = Lexer.scan('@STOP');
+        expect(tokens[0].kind).to.equal(TokenKind.AtStop);
+    });
 });

@@ -853,6 +853,11 @@ export let DiagnosticMessages = {
         message: `Tag '${actualTag}' must be all lower case. Use '${expectedTag}' instead`,
         code: 1157,
         severity: DiagnosticSeverity.Error
+    }),
+    unterminatedReplacementIdentifier: () => ({
+        message: `Unterminated replacement identifier`,
+        code: 1199,
+        severity: DiagnosticSeverity.Error
     })
 };
 

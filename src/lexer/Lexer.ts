@@ -164,6 +164,14 @@ export class Lexer {
             if (this.peek() === '.') {
                 this.advance();
                 this.addToken(TokenKind.Callfunc);
+            } else if (this.peek() === '{') {
+                this.replacementIdentifier();
+            } else if (this.source.slice(this.current, this.current + 4).toLowerCase() === 'stop') {
+                this.advance();
+                this.advance();
+                this.advance();
+                this.advance();
+                this.addToken(TokenKind.AtStop);
             } else {
                 this.addToken(TokenKind.At);
             }
@@ -686,6 +694,30 @@ export class Lexer {
             range: this.rangeOf()
         });
         this.start = this.current;
+    }
+
+    private replacementIdentifier() {
+        //consume the {
+        this.advance();
+        let depth = 1;
+        while (depth > 0 && !this.isAtEnd()) {
+            let c = this.peek();
+            if (c === '{') {
+                depth++;
+            } else if (c === '}') {
+                depth--;
+            }
+            this.advance();
+        }
+
+        if (depth > 0) {
+            this.diagnostics.push({
+                ...DiagnosticMessages.unterminatedReplacementIdentifier(),
+                range: this.rangeOf()
+            });
+        } else {
+            this.addToken(TokenKind.ReplacementIdentifier);
+        }
     }
 
     private templateQuasiString() {
