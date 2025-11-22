@@ -53,6 +53,7 @@ export enum TokenKind {
     LongIntegerLiteral = 'LongIntegerLiteral',
     EscapedCharCodeLiteral = 'EscapedCharCodeLiteral', //this is used to capture things like `\n`, `\r\n` in template strings
     RegexLiteral = 'RegexLiteral',
+    ReplacementIdentifier = 'ReplacementIdentifier',
 
     //types
     Void = 'Void',
@@ -81,6 +82,7 @@ export enum TokenKind {
     QuestionLeftSquare = 'QuestionLeftSquare', // ?[
     QuestionLeftParen = 'QuestionLeftParen', // ?(
     QuestionAt = 'QuestionAt', // ?@
+    AtStop = 'AtStop', // @stop
 
     // conditional compilation
     HashIf = 'HashIf', // #if

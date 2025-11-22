@@ -752,6 +752,11 @@ export let DiagnosticMessages = {
         message: `${accessDescription} access not permitted after a function call when used in an expression statement`,
         code: 1143,
         severity: DiagnosticSeverity.Error
+    }),
+    unterminatedReplacementIdentifier: () => ({
+        message: `Unterminated replacement identifier`,
+        code: 1199,
+        severity: DiagnosticSeverity.Error
     })
 };
 

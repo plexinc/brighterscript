@@ -1157,7 +1157,7 @@ export class Parser {
             return this.typeStatement();
         }
 
-        if (this.check(TokenKind.Stop)) {
+        if (this.check(TokenKind.Stop) || this.check(TokenKind.AtStop)) {
             return this.stopStatement();
         }
 
@@ -2740,11 +2740,11 @@ export class Parser {
                     ...AllowedProperties
                 );
 
-                // force it into an identifier so the AST makes some sense
-                name.kind = TokenKind.Identifier;
                 if (!name) {
                     break;
                 }
+                // force it into an identifier so the AST makes some sense
+                name.kind = TokenKind.Identifier;
                 expr = new XmlAttributeGetExpression(expr, name as Identifier, dot);
                 //only allow a single `@` expression
                 break;
@@ -2996,6 +2996,9 @@ export class Parser {
 
             case this.matchAny(TokenKind.Identifier, ...this.allowedLocalIdentifiers):
                 return new VariableExpression(this.previous() as Identifier);
+
+            case this.match(TokenKind.ReplacementIdentifier):
+                return new LiteralExpression(this.previous());
 
             case this.match(TokenKind.LeftParen):
                 let left = this.previous();
