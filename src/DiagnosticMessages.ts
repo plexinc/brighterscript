@@ -747,6 +747,11 @@ export let DiagnosticMessages = {
         message: `Non-void ${functionType} must return a value`,
         code: 1142,
         severity: DiagnosticSeverity.Error
+    }),
+    unterminatedReplacementIdentifier: () => ({
+        message: `Unterminated replacement identifier`,
+        code: 1143,
+        severity: DiagnosticSeverity.Error
     })
 };
 
