@@ -1,0 +1,77 @@
+name: Xelp Shadow Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  shadow-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout xelp/main
+        uses: actions/checkout@v4
+        with:
+          ref: xelp/main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Calculate XelpShadow Version
+        id: version
+        run: |
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current version: $CURRENT_VERSION"
+
+          # Remove pre-release and build metadata
+          BASE_VERSION=$(echo "$CURRENT_VERSION" | sed 's/[-+].*//')
+
+          # Split version into parts
+          IFS='.' read -r -a PARTS <<< "$BASE_VERSION"
+          if [ ${#PARTS[@]} -ne 3 ]; then
+            echo "Error: Version must be in MAJOR.MINOR.PATCH format"
+            exit 1
+          fi
+          MAJOR="${PARTS[0]}"
+          MINOR="${PARTS[1]}"
+          PATCH="${PARTS[2]}"
+
+          # Add 100 to major version
+          NEW_MAJOR=$((MAJOR + 100))
+
+          # Get build metadata
+          DATE=$(date +'%Y%m%d')
+          SHORT_HASH=$(git rev-parse --short HEAD)
+
+          SHADOW_VERSION="$NEW_MAJOR.$MINOR.$PATCH-xelp-$DATE-$SHORT_HASH"
+
+          echo "Shadow version: $SHADOW_VERSION"
+          echo "shadow_version=$SHADOW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Update package.json version
+        run: |
+          npm version ${{ steps.version.outputs.shadow_version }} --no-git-tag-version --ignore-scripts
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit and Push
+        run: |
+          set -e
+          git checkout -b xelp/dist
+          git add -f dist/ package.json package-lock.json
+          git commit -m "Release shadow version ${{ steps.version.outputs.shadow_version }}"
+          git tag "v${{ steps.version.outputs.shadow_version }}"
+          git push origin xelp/dist --force
+          git push origin "v${{ steps.version.outputs.shadow_version }}"
