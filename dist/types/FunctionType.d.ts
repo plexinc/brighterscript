@@ -1,0 +1,25 @@
+import type { BscType } from './BscType';
+export declare class FunctionType implements BscType {
+    returnType: BscType;
+    constructor(returnType: BscType);
+    /**
+     * The name of the function for this type. Can be undefined
+     */
+    name: string | undefined;
+    /**
+     * Determines if this is a sub or not
+     */
+    isSub: boolean;
+    params: {
+        name: string;
+        type: BscType;
+        isOptional: boolean;
+    }[];
+    setName(name: string): this;
+    addParameter(name: string, type: BscType, isOptional: boolean): this;
+    isAssignableTo(targetType: BscType): boolean;
+    isConvertibleTo(targetType: BscType): boolean;
+    toString(): string;
+    toTypeString(): string;
+    clone(): FunctionType;
+}

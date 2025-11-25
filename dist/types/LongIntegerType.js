@@ -1,0 +1,40 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LongIntegerType = void 0;
+const DoubleType_1 = require("./DoubleType");
+const DynamicType_1 = require("./DynamicType");
+const FloatType_1 = require("./FloatType");
+const IntegerType_1 = require("./IntegerType");
+class LongIntegerType {
+    constructor(typeText) {
+        this.typeText = typeText;
+    }
+    isAssignableTo(targetType) {
+        return (targetType instanceof LongIntegerType ||
+            targetType instanceof DynamicType_1.DynamicType);
+    }
+    isConvertibleTo(targetType) {
+        if (targetType instanceof DynamicType_1.DynamicType ||
+            targetType instanceof IntegerType_1.IntegerType ||
+            targetType instanceof FloatType_1.FloatType ||
+            targetType instanceof DoubleType_1.DoubleType ||
+            targetType instanceof LongIntegerType) {
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+    toString() {
+        var _a;
+        return (_a = this.typeText) !== null && _a !== void 0 ? _a : 'longinteger';
+    }
+    toTypeString() {
+        return this.toString();
+    }
+    clone() {
+        return new LongIntegerType(this.typeText);
+    }
+}
+exports.LongIntegerType = LongIntegerType;
+//# sourceMappingURL=LongIntegerType.js.map
