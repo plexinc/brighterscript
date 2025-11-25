@@ -1,0 +1,105 @@
+name: Xelp Shadow Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  shadow-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout xelp/main
+        uses: actions/checkout@v4
+        with:
+          ref: xelp/main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Calculate XelpShadow Version
+        id: version
+        run: |
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          echo "Current version: $CURRENT_VERSION"
+          echo "Package name: $PACKAGE_NAME"
+          echo "package_name=$PACKAGE_NAME" >> $GITHUB_OUTPUT
+
+          # Remove pre-release and build metadata
+          BASE_VERSION=$(echo "$CURRENT_VERSION" | sed 's/[-+].*//')
+
+          # Split version into parts
+          IFS='.' read -r -a PARTS <<< "$BASE_VERSION"
+          if [ ${#PARTS[@]} -ne 3 ]; then
+            echo "Error: Version must be in MAJOR.MINOR.PATCH format"
+            exit 1
+          fi
+          MAJOR="${PARTS[0]}"
+          MINOR="${PARTS[1]}"
+          PATCH="${PARTS[2]}"
+
+          # Get build metadata
+          DATE=$(date +'%Y%m%d')
+          SHORT_HASH=$(git rev-parse --short HEAD)
+
+          # Construct base version: MAJOR.MINOR.DATE<PATCH>
+          CLEAN_VERSION="$MAJOR.$MINOR.$DATE$PATCH"
+
+          # Full version with metadata for the tag message/release notes
+          METADATA_VERSION="$CLEAN_VERSION+xelp-$SHORT_HASH"
+
+          # Use clean version for package.json and git tag (no + or -)
+          PACKAGE_VERSION="$CLEAN_VERSION"
+          TAG_VERSION="$CLEAN_VERSION"
+
+          echo "Clean version: $CLEAN_VERSION"
+          echo "Metadata version: $METADATA_VERSION"
+
+          echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+          echo "tag_version=$TAG_VERSION" >> $GITHUB_OUTPUT
+          echo "metadata_version=$METADATA_VERSION" >> $GITHUB_OUTPUT
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Update package.json version
+        run: |
+          npm version ${{ steps.version.outputs.package_version }} --no-git-tag-version
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit and Push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          git checkout -b xelp/dist
+          git add -f dist/ package.json package-lock.json
+          git commit -m "Release shadow version ${{ steps.version.outputs.package_version }}"
+          git tag -a "${{ steps.version.outputs.tag_version }}" -m "Shadow release ${{ steps.version.outputs.metadata_version }}"
+          git push origin xelp/dist --force
+          git push origin "${{ steps.version.outputs.tag_version }}" --force
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag_version }}" \
+            --repo $GITHUB_REPOSITORY \
+            --title "Shadow Release ${{ steps.version.outputs.tag_version }}" \
+            --notes "Shadow release build ${{ steps.version.outputs.metadata_version }}
+
+            ## package.json
+            \`\`\`json
+            \"${{ steps.version.outputs.package_name }}\": \"https://github.com/${{ github.repository }}.git#v${{ steps.version.outputs.tag_version }}\"
+            \`\`\`" \
+            --prerelease
