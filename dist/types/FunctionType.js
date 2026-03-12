@@ -1,0 +1,76 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FunctionType = void 0;
+const DynamicType_1 = require("./DynamicType");
+class FunctionType {
+    constructor(returnType) {
+        this.returnType = returnType;
+        /**
+         * Determines if this is a sub or not
+         */
+        this.isSub = false;
+        this.params = [];
+    }
+    setName(name) {
+        this.name = name;
+        return this;
+    }
+    addParameter(name, type, isOptional) {
+        this.params.push({
+            name: name,
+            type: type,
+            isOptional: isOptional === true ? true : false
+        });
+        return this;
+    }
+    isAssignableTo(targetType) {
+        if (targetType instanceof DynamicType_1.DynamicType) {
+            return true;
+        }
+        else if (targetType instanceof FunctionType) {
+            //compare all parameters
+            let len = Math.max(this.params.length, targetType.params.length);
+            for (let i = 0; i < len; i++) {
+                let myParam = this.params[i];
+                let targetParam = targetType.params[i];
+                if (!myParam || !targetParam || !myParam.type.isAssignableTo(targetParam.type)) {
+                    return false;
+                }
+            }
+            //compare return type
+            if (!this.returnType || !targetType.returnType || !this.returnType.isAssignableTo(targetType.returnType)) {
+                return false;
+            }
+            //made it here, all params and return type are equivalent
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+    isConvertibleTo(targetType) {
+        return this.isAssignableTo(targetType);
+    }
+    toString() {
+        let paramTexts = [];
+        for (let param of this.params) {
+            paramTexts.push(`${param.name}${param.isOptional ? '?' : ''} as ${param.type.toString()}`);
+        }
+        return `${this.isSub ? 'sub' : 'function'} ${this.name}(${paramTexts.join(', ')}) as ${this.returnType.toString()}`;
+    }
+    toTypeString() {
+        return 'Function';
+    }
+    clone() {
+        var _a;
+        const result = new FunctionType(this.returnType);
+        for (let param of this.params) {
+            result.addParameter(param.name, param.type, param.isOptional);
+        }
+        result.isSub = this.isSub;
+        result.returnType = (_a = this.returnType) === null || _a === void 0 ? void 0 : _a.clone();
+        return result;
+    }
+}
+exports.FunctionType = FunctionType;
+//# sourceMappingURL=FunctionType.js.map
