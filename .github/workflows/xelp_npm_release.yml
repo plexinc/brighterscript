@@ -1,0 +1,179 @@
+name: Xelp npm Release
+
+# Builds the current xelp/main, publishes it to GitHub Packages as
+# @plexinc/<name>, then tags the commit and creates a GitHub release.
+#
+# Authentication is the workflow's own GITHUB_TOKEN, so there is no secret to
+# provision or rotate. Consumers authenticate the way every other Plex client
+# repo does, with a personal access token carrying read:packages.
+#
+# This replaces xelp_shadow_release.yml, which committed dist/ to the xelp/dist
+# branch and served the package to consumers through a git tag. Run one or the
+# other, never both: they compute the same version string and so want the same
+# tag, and the shadow release force pushes it.
+#
+# Keep the shadow release around until roku-client, the only consumer of these
+# forks, is installing from the @plexinc package. Then delete it.
+#
+
+on:
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: Build and pack, but do not publish, tag, or release.
+        type: boolean
+        default: false
+
+# packages: write is the publish permission. contents: write is only for the
+# tag and the release.
+#
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - name: Check out xelp/main
+        uses: actions/checkout@v5
+        with:
+          ref: xelp/main
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com
+          scope: '@plexinc'
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Work out the package name and version
+        id: release
+        run: |
+          set -euo pipefail
+
+          UPSTREAM_NAME=$(node -p "require('./package.json').name")
+
+          # Re-scope to @plexinc, dropping any existing scope, so
+          # @rokucommunity/bslint becomes @plexinc/bslint. GitHub Packages
+          # requires the scope to match the owner of this repository.
+          #
+          SCOPED_NAME="@plexinc/${UPSTREAM_NAME##*/}"
+
+          # Version scheme, unchanged from the shadow release: the upstream major
+          # and minor, then the build date with the upstream patch appended, so
+          # 0.70.3 built on 2026-08-28 becomes 0.70.202608283.
+          #
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          BASE_VERSION=${CURRENT_VERSION%%[-+]*}
+
+          IFS='.' read -r -a PARTS <<< "$BASE_VERSION"
+          if [ ${#PARTS[@]} -ne 3 ]; then
+            echo "::error::Version $CURRENT_VERSION is not MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+
+          VERSION="${PARTS[0]}.${PARTS[1]}.$(date -u +'%Y%m%d')${PARTS[2]}"
+
+          {
+            echo "upstream_name=$UPSTREAM_NAME"
+            echo "scoped_name=$SCOPED_NAME"
+            echo "version=$VERSION"
+            echo "metadata_version=$VERSION+xelp-$(git rev-parse --short HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+      # Published versions are immutable and tags are no longer force-pushed, so
+      # a same day re-run would collide twice over. Fail before doing the work.
+      #
+      - name: Fail if this version is already published
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SCOPED_NAME: ${{ steps.release.outputs.scoped_name }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          if npm view "$SCOPED_NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "::error::$SCOPED_NAME@$VERSION is already published. Land another commit, or wait for tomorrow's date stamp."
+            exit 1
+          fi
+
+      # The upstream lockfile is what keeps the transitive dependencies on
+      # working versions, so install from it rather than re-resolving. A clean
+      # re-resolve floats vscode-languageserver-protocol onto an exports only
+      # release that the TypeScript build cannot import.
+      #
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # The shadow release ran the lint and test suites as a side effect of
+      # npm version, which triggers the preversion script. Setting the version
+      # through npm pkg set does not run lifecycle scripts, so the gate runs
+      # here where a failure names the step that failed.
+      #
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      # The rename happens here and is never committed to xelp/main, so a merge
+      # from upstream never has to resolve a changed package name. The repository
+      # URL is what links the package to this repo, and GitHub Packages rejects
+      # the publish if it points anywhere else.
+      #
+      - name: Rewrite the package metadata for the @plexinc scope
+        env:
+          SCOPED_NAME: ${{ steps.release.outputs.scoped_name }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          npm pkg set name="$SCOPED_NAME"
+          npm pkg set version="$VERSION"
+          npm pkg set repository.url="git+https://github.com/${{ github.repository }}.git"
+
+      - name: Publish to GitHub Packages
+        if: ${{ !inputs.dryRun }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm publish
+
+      - name: Pack without publishing
+        if: ${{ inputs.dryRun }}
+        run: npm pack --dry-run
+
+      - name: Tag the release
+        if: ${{ !inputs.dryRun }}
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          METADATA_VERSION: ${{ steps.release.outputs.metadata_version }}
+        run: |
+          git tag -a "$VERSION" -m "Release $METADATA_VERSION"
+          git push origin "$VERSION"
+
+      - name: Create the GitHub release
+        if: ${{ !inputs.dryRun }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_NAME: ${{ steps.release.outputs.upstream_name }}
+          SCOPED_NAME: ${{ steps.release.outputs.scoped_name }}
+          VERSION: ${{ steps.release.outputs.version }}
+          METADATA_VERSION: ${{ steps.release.outputs.metadata_version }}
+        run: |
+          gh release create "$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$SCOPED_NAME $VERSION" \
+            --notes "Built from \`$METADATA_VERSION\`.
+
+          Consume it with an alias, so the package keeps its upstream name inside \`node_modules\`:
+
+          \`\`\`json
+          \"$UPSTREAM_NAME\": \"npm:$SCOPED_NAME@$VERSION\"
+          \`\`\`" \
+            --prerelease
