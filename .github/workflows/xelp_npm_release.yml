@@ -4,8 +4,10 @@ name: Xelp npm Release
 # @plexinc/<name>, then tags the commit and creates a GitHub release.
 #
 # Authentication is the workflow's own GITHUB_TOKEN, so there is no secret to
-# provision or rotate. Consumers authenticate the way every other Plex client
-# repo does, with a personal access token carrying read:packages.
+# provision or rotate. Reading a dependency that lives in another repository's
+# package needs that repository granted under the package's Manage Actions
+# access, not a different token. Consumers authenticate the way every other Plex
+# client repo does, with a personal access token carrying read:packages.
 #
 # This replaces xelp_shadow_release.yml, which committed dist/ to the xelp/dist
 # branch and served the package to consumers through a git tag. Run one or the
@@ -20,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       dryRun:
-        description: Build and pack, but do not publish, tag, or release.
+        description: Build and report what would be packed, without publishing, tagging or releasing.
         type: boolean
         default: false
 
@@ -93,6 +95,11 @@ jobs:
       #
       - name: Fail if this version is already published
         env:
+          # Only the three steps that talk to the registry get the token: this
+          # one, the install, and the publish. Building, linting, testing and
+          # packing do not reach the network, so they do not need it. Add it to
+          # any new step that runs npm against the registry.
+          #
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SCOPED_NAME: ${{ steps.release.outputs.scoped_name }}
           VERSION: ${{ steps.release.outputs.version }}
@@ -102,12 +109,29 @@ jobs:
             exit 1
           fi
 
+          # The publish happens before the tag, and a published version cannot be
+          # replaced, so a tag collision found at the tagging step would leave a
+          # published package that no re-run can tag. The shadow release used this
+          # same version scheme, so its tags are real candidates for a collision.
+          #
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "::error::Tag $VERSION already exists. Land another commit, or wait for tomorrow's date stamp."
+            exit 1
+          fi
+
       # The upstream lockfile is what keeps the transitive dependencies on
       # working versions, so install from it rather than re-resolving. A clean
       # re-resolve floats vscode-languageserver-protocol onto an exports only
       # release that the TypeScript build cannot import.
       #
       - name: Install dependencies
+        env:
+          # Reading a dependency published from another repository requires that
+          # repository to be listed under the package's Manage Actions access.
+          # The grant is per package and is not inherited, so a newly published
+          # @plexinc package needs its consumers added before this will resolve.
+          #
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
       - name: Build
@@ -144,7 +168,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm publish
 
-      - name: Pack without publishing
+      - name: Report what would be packed
         if: ${{ inputs.dryRun }}
         run: npm pack --dry-run
 
