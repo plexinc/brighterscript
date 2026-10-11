@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as sinonImport from 'sinon';
 import { CompletionItemKind, Position, Range } from 'vscode-languageserver';
 import type { BsDiagnostic, Callable, CommentFlag, VariableDeclaration } from '../interfaces';
+import type { FunctionScope } from '../FunctionScope';
 import { Program } from '../Program';
 import { BooleanType } from '../types/BooleanType';
 import { DynamicType } from '../types/DynamicType';
@@ -2222,6 +2223,66 @@ describe('BrsFile', () => {
 
             let innerScope = file.getFunctionScopeAtPosition(Position.create(4, 10));
             expect(innerScope.variableDeclarations).to.be.lengthOf(1);
+        });
+
+        it('finds the function scope at a position among many functions', () => {
+            file.parse(`
+                sub First()
+                end sub
+
+                sub Second()
+                    inner = sub()
+                        print "inner"
+                    end sub
+                end sub
+
+                sub Third()
+                end sub
+            `);
+            const startLineAt = (line: number, character: number) => file.getFunctionScopeAtPosition(Position.create(line, character))?.func.range?.start.line;
+            expect(startLineAt(1, 20)).to.equal(1);
+            expect(startLineAt(3, 0)).to.be.undefined;
+            expect(startLineAt(4, 20)).to.equal(4);
+            expect(startLineAt(6, 25)).to.equal(5);
+            expect(startLineAt(10, 20)).to.equal(10);
+            expect(startLineAt(12, 0)).to.be.undefined;
+        });
+
+        it('finds the same function scope as checking every scope in order', () => {
+            const checkEveryScope = (position: Position, scopes: FunctionScope[]): FunctionScope | undefined => {
+                for (const scope of scopes) {
+                    if (util.rangeContains(scope.range, position)) {
+                        return checkEveryScope(position, scope.childrenScopes) ?? scope;
+                    }
+                }
+                return undefined;
+            };
+            const sources = [`
+                sub First()
+                    inner = sub()
+                        deeper = sub()
+                        end sub
+                    end sub
+                end sub
+                sub Second()
+                end sub
+            `, `
+                sub MissingEnd()
+                    x = 1
+                sub Second()
+                    y = sub()
+                end sub
+            `];
+            for (const source of sources) {
+                const brsFile = new BrsFile(`${rootDir}/source/main.brs`, 'source/main.brs', program);
+                brsFile.parse(source);
+                source.split('\n').forEach((text, line) => {
+                    for (let character = 0; character <= text.length; character++) {
+                        const position = Position.create(line, character);
+                        expect(brsFile.getFunctionScopeAtPosition(position)).to.equal(checkEveryScope(position, brsFile.functionScopes));
+                    }
+                });
+            }
         });
 
         it('finds variables declared in function scopes', () => {

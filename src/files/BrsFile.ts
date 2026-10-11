@@ -812,6 +812,40 @@ export class BrsFile {
     }
 
     /**
+     * The file's top level function scopes, in order, when a position can be found among them by binary search: every range
+     * is present, each top level function starts after the previous one ends, and every nested function sits inside its
+     * parent. Then the first of the file's scopes that contains a position is the top level one found by the search.
+     * Undefined when that does not hold, such as after a parse error, so the caller checks every scope instead.
+     * Cached on the parser-level cache, so it is rebuilt when the file re-parses.
+     */
+    private getSortedTopLevelFunctionScopes() {
+        return this.cache.getOrAdd('sortedTopLevelFunctionScopes', () => this.findSortedTopLevelFunctionScopes(this.functionScopes));
+    }
+
+    private findSortedTopLevelFunctionScopes(functionScopes: FunctionScope[]): FunctionScope[] | undefined {
+        const topLevelScopes = [] as FunctionScope[];
+        for (const scope of functionScopes) {
+            const range = scope.range;
+            if (!range) {
+                return undefined;
+            }
+            if (scope.parentScope) {
+                const parentRange = scope.parentScope.range;
+                if (!parentRange || util.comparePositionToRange(range.start, parentRange) !== 0 || util.comparePositionToRange(range.end, parentRange) !== 0) {
+                    return undefined;
+                }
+            } else {
+                const previous = topLevelScopes[topLevelScopes.length - 1];
+                if (previous && util.comparePositionToRange(range.start, previous.range) !== 1) {
+                    return undefined;
+                }
+                topLevelScopes.push(scope);
+            }
+        }
+        return topLevelScopes;
+    }
+
+    /**
      * Find the function scope at the given position.
      * @param position the position used to find the deepest scope that contains it
      */
@@ -824,6 +858,26 @@ export class BrsFile {
     public _getFunctionScopeAtPosition(position: Position, functionScopes?: FunctionScope[]): FunctionScope {
         if (!functionScopes) {
             functionScopes = this.functionScopes;
+        }
+        //binary search the top level functions instead of checking every function in the file, when they allow it
+        const topLevelScopes = position && functionScopes === this._functionScopes ? this.getSortedTopLevelFunctionScopes() : undefined;
+        if (topLevelScopes) {
+            let low = 0;
+            let high = topLevelScopes.length - 1;
+            while (low <= high) {
+                const middle = Math.floor((low + high) / 2);
+                const comparison = util.comparePositionToRange(position, topLevelScopes[middle].range);
+                if (comparison === 0) {
+                    const scope = topLevelScopes[middle];
+                    return this._getFunctionScopeAtPosition(position, scope.childrenScopes) ?? scope;
+                }
+                if (comparison < 0) {
+                    high = middle - 1;
+                } else {
+                    low = middle + 1;
+                }
+            }
+            return undefined;
         }
         for (let scope of functionScopes) {
             if (util.rangeContains(scope.range, position)) {
