@@ -11,6 +11,7 @@ import type { BRSComponentData } from '../../roku-types';
 import type { Token } from '../../lexer/Token';
 import { TokenKind } from '../../lexer/TokenKind';
 import type { Scope } from '../../Scope';
+import type { SymbolTable } from '../../SymbolTable';
 import type { DiagnosticRelatedInformation } from 'vscode-languageserver';
 import type { Expression } from '../../parser/AstNode';
 import type { VariableExpression, DottedGetExpression } from '../../parser/Expression';
@@ -168,19 +169,30 @@ export class ScopeValidator {
                 const parts = util.getDottedGetPath(expression);
 
                 if (parts.length > 0) {
+                    const symbolTable = expression.getSymbolTable();
+                    const enclosingNamespaceNameLower = expression.findAncestor(isNamespaceStatement)?.getName(ParseMode.BrighterScript)?.toLowerCase();
                     result.push({
                         parts: parts,
                         expression: expression,
-                        enclosingNamespaceNameLower: expression.findAncestor(isNamespaceStatement)?.getName(ParseMode.BrighterScript)?.toLowerCase()
+                        symbolTable: symbolTable,
+                        //namespace symbol tables gain scope specific siblings, so only resolve outside of namespaces
+                        isDeclaredInFile: !enclosingNamespaceNameLower && this.isDeclaredInFile(file, symbolTable, parts[0].name?.text),
+                        enclosingNamespaceNameLower: enclosingNamespaceNameLower
                     });
                 }
             }
             return result as unknown as Readonly<ExpressionInfo>[];
         });
 
+        //without namespaces or enums, a name declared in the file is known and has nothing further to check
+        const scopeHasNamespacesOrEnums = scope.namespaceLookup.size > 0 || scope.getEnumMap().size > 0;
+
         outer:
         for (const info of expressionInfos) {
-            const symbolTable = info.expression.getSymbolTable();
+            if (info.isDeclaredInFile && !scopeHasNamespacesOrEnums) {
+                continue;
+            }
+            const symbolTable = info.symbolTable;
             const firstPart = info.parts[0];
             const firstNamespacePart = info.parts[0].name.text;
             const firstNamespacePartLower = firstNamespacePart?.toLowerCase();
@@ -189,6 +201,7 @@ export class ScopeValidator {
 
             //flag all unknown left-most variables
             if (
+                !info.isDeclaredInFile &&
                 !symbolTable?.hasSymbol(firstPart.name?.text) &&
                 !namespaceContainer
             ) {
@@ -281,6 +294,26 @@ export class ScopeValidator {
                 }, 'When used in scope');
             }
         }
+    }
+
+    /**
+     * Whether the name is declared in the symbol table or one of its ancestors up to the file, which hold the same
+     * symbols in every scope. Only the file symbol table links on to the scope.
+     */
+    private isDeclaredInFile(file: BrsFile, symbolTable: SymbolTable | undefined, name: string | undefined) {
+        if (!name) {
+            return false;
+        }
+        const fileSymbolTable = file.parser.symbolTable;
+        for (let table = symbolTable; table; table = table.parent) {
+            if (table.hasSymbol(name, false)) {
+                return true;
+            }
+            if (table === fileSymbolTable) {
+                return false;
+            }
+        }
+        return false;
     }
 
     /**
@@ -560,6 +593,16 @@ export class ScopeValidator {
 interface ExpressionInfo {
     parts: Readonly<[VariableExpression, ...DottedGetExpression[]]>;
     expression: Readonly<Expression>;
+    /**
+     * The closest symbol table to the expression, looked up once per file rather than once per scope.
+     * The table object is the same in every scope; a scope links its namespace siblings onto it while it
+     * validates, so lookups through it still see the current scope.
+     */
+    symbolTable: SymbolTable | undefined;
+    /**
+     * The first part is declared in this file, below the scope, so it is known in every scope
+     */
+    isDeclaredInFile: boolean;
     /**
      * The full namespace name that encloses this expression
      */
