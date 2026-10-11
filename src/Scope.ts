@@ -800,6 +800,11 @@ export class Scope {
     }
 
     private detectVariableNamespaceCollisions(file: BrsFile) {
+        //nothing can collide with a namespace when the scope has none, so skip walking every param and assignment
+        if (this.namespaceLookup.size === 0) {
+            return;
+        }
+
         //find all function parameters
         for (let func of file.parser.references.functionExpressions) {
             for (let param of func.parameters) {
