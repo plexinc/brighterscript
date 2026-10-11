@@ -14,7 +14,7 @@ import type { Scope } from '../../Scope';
 import type { SymbolTable } from '../../SymbolTable';
 import type { DiagnosticRelatedInformation } from 'vscode-languageserver';
 import type { Expression } from '../../parser/AstNode';
-import type { VariableExpression, DottedGetExpression } from '../../parser/Expression';
+import type { AAIndexedMemberExpression, VariableExpression, DottedGetExpression } from '../../parser/Expression';
 import { ParseMode } from '../../parser/Parser';
 import { createVisitor, WalkMode } from '../../astUtils/visitors';
 
@@ -47,6 +47,7 @@ export class ScopeValidator {
         this.event = undefined;
         this.onceCache.clear();
         this.multiScopeCache.clear();
+        this.aaIndexedMembersByFile.clear();
     }
 
     private walkFiles() {
@@ -59,64 +60,77 @@ export class ScopeValidator {
         });
     }
 
+    private aaIndexedMembersByFile = new Cache<BrsFile, AAIndexedMemberExpression[]>();
     private validateComputedAAKeys(file: BrsFile) {
         const { scope } = this.event;
-        file.ast.walk(createVisitor({
-            AAIndexedMemberExpression: (member) => {
-                // Direct string literal (e.g. ["my-key"]) is valid
-                if (isLiteralExpression(member.key)) {
-                    if (member.key.token.kind !== TokenKind.StringLiteral) {
-                        this.addMultiScopeDiagnostic({
-                            file: file,
-                            ...DiagnosticMessages.computedAAKeyMustBeStringExpression(),
-                            range: member.key.range
-                        });
-                    }
-                    return;
+        //find the computed keys ONCE per file, rather than walking the whole tree again in every scope
+        const members = this.aaIndexedMembersByFile.getOrAdd(file, () => {
+            const result = [] as AAIndexedMemberExpression[];
+            file.ast.walk(createVisitor({
+                AAIndexedMemberExpression: (member) => {
+                    result.push(member);
                 }
-                const parts = util.getDottedGetPath(member.key);
-                if (parts.length === 0) {
-                    this.addMultiScopeDiagnostic({
-                        file: file,
-                        ...DiagnosticMessages.computedPropertyKeyMustBeConstantExpression(),
-                        range: member.key.range
-                    });
-                    return;
-                }
-                const enclosingNamespace = member.key.findAncestor(isNamespaceStatement)?.getName(ParseMode.BrighterScript)?.toLowerCase();
-                const entityName = parts.map(p => p.name.text.toLowerCase()).join('.');
-                // Check enum member
-                const memberLink = scope.getEnumMemberFileLink(entityName, enclosingNamespace);
-                if (memberLink) {
-                    const value = memberLink.item.getValue();
-                    if (!value?.startsWith('"')) {
-                        this.addMultiScopeDiagnostic({
-                            file: file,
-                            ...DiagnosticMessages.computedAAKeyMustBeStringExpression(),
-                            range: member.key.range
-                        });
-                    }
-                    return;
-                }
-                // Check const — follow the chain to find the root literal type
-                const constLink = scope.getConstFileLink(entityName, enclosingNamespace);
-                if (constLink) {
-                    if (!this.constResolvesToString(constLink.item.value, enclosingNamespace, scope)) {
-                        this.addMultiScopeDiagnostic({
-                            file: file,
-                            ...DiagnosticMessages.computedAAKeyMustBeStringExpression(),
-                            range: member.key.range
-                        });
-                    }
-                    return;
-                }
+            }), { walkMode: WalkMode.visitAllRecursive });
+            return result;
+        });
+        for (const member of members) {
+            this.validateComputedAAKey(file, scope, member);
+        }
+    }
+
+    private validateComputedAAKey(file: BrsFile, scope: Scope, member: AAIndexedMemberExpression) {
+        // Direct string literal (e.g. ["my-key"]) is valid
+        if (isLiteralExpression(member.key)) {
+            if (member.key.token.kind !== TokenKind.StringLiteral) {
                 this.addMultiScopeDiagnostic({
                     file: file,
-                    ...DiagnosticMessages.computedPropertyKeyMustBeConstantExpression(),
+                    ...DiagnosticMessages.computedAAKeyMustBeStringExpression(),
                     range: member.key.range
                 });
             }
-        }), { walkMode: WalkMode.visitAllRecursive });
+            return;
+        }
+        const parts = util.getDottedGetPath(member.key);
+        if (parts.length === 0) {
+            this.addMultiScopeDiagnostic({
+                file: file,
+                ...DiagnosticMessages.computedPropertyKeyMustBeConstantExpression(),
+                range: member.key.range
+            });
+            return;
+        }
+        const enclosingNamespace = member.key.findAncestor(isNamespaceStatement)?.getName(ParseMode.BrighterScript)?.toLowerCase();
+        const entityName = parts.map(p => p.name.text.toLowerCase()).join('.');
+        // Check enum member
+        const memberLink = scope.getEnumMemberFileLink(entityName, enclosingNamespace);
+        if (memberLink) {
+            const value = memberLink.item.getValue();
+            if (!value?.startsWith('"')) {
+                this.addMultiScopeDiagnostic({
+                    file: file,
+                    ...DiagnosticMessages.computedAAKeyMustBeStringExpression(),
+                    range: member.key.range
+                });
+            }
+            return;
+        }
+        // Check const — follow the chain to find the root literal type
+        const constLink = scope.getConstFileLink(entityName, enclosingNamespace);
+        if (constLink) {
+            if (!this.constResolvesToString(constLink.item.value, enclosingNamespace, scope)) {
+                this.addMultiScopeDiagnostic({
+                    file: file,
+                    ...DiagnosticMessages.computedAAKeyMustBeStringExpression(),
+                    range: member.key.range
+                });
+            }
+            return;
+        }
+        this.addMultiScopeDiagnostic({
+            file: file,
+            ...DiagnosticMessages.computedPropertyKeyMustBeConstantExpression(),
+            range: member.key.range
+        });
     }
 
     /**
